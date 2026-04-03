@@ -1,20 +1,27 @@
-import {
+package db
+
+import (
 	"database/sql"
-	pq "github.com/lib/pq"
 	"fmt"
 	"time"
+
+	_ "github.com/lib/pq"
+	config "github.com/url-shortener/backend/internal/config"
 )
 
-type File struct {
-	ID        int       `db:"id"`
-	URL       string    `db:"url"`
-	ShortCode string    `db:"short_code"`
-	CreatedAt time.Time `db:"created_at"`
-	Size      int       `db:"bytes"`
-	FileType  string    `db:"file_type"`
-	ChunksGroupID int       `db:"chunks_group_id"`
+type Database struct {
+	DB *sql.DB
 }
 
+type File struct {
+	ID            int       `db:"id"`
+	URL           string    `db:"url"`
+	ShortCode     string    `db:"short_code"`
+	CreatedAt     time.Time `db:"created_at"`
+	Size          int       `db:"bytes"`
+	FileType      string    `db:"file_type"`
+	ChunksGroupID int       `db:"chunks_group_id"`
+}
 
 func NewDatabase(cfg *config.DBConfig) (*Database, error) {
 	db, err := sql.Open("postgres", cfg.URL)
@@ -32,7 +39,7 @@ func NewDatabase(cfg *config.DBConfig) (*Database, error) {
 	return &Database{DB: db}, nil
 }
 
-func (d *Database)InitSchema() error {
+func (d *Database) InitSchema() error {
 	query := `
 		CREATE TABLE IF NOT EXISTS files (
 			id SERIAL PRIMARY KEY,
