@@ -57,5 +57,35 @@ func (c *MinioClient) Add(ctx context.Context, f *os.File, contentType string) (
 }
 
 func (c *MinioClient) Get(ctx context.Context, objectID string) (*os.File, error) {
+	reader, err := c.client.GetObject(
+		ctx,
+		c.bucketName,
+		objectID,
+		minio.GetObjectOptions{},
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
 
+	tmpFile, err := os.CreateTemp("", "minio-*")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = reader.WriteTo(tmpFile)
+	if err != nil {
+		return nil, err
+	}
+
+	return tmpFile, nil
+}
+
+func (c *MinioClient) Delete(ctx context.Context, objectID string) error {
+	return c.client.RemoveObject(
+		ctx,
+		c.bucketName,
+		objectID,
+		minio.RemoveObjectOptions{},
+	)
 }
