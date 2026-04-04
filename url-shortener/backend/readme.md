@@ -1,68 +1,162 @@
-# URL Shortener Backend
+# URL Shortener with Chunked File Storage (Go, MinIO, PostgreSQL)
 
 ## Overview
 
-This project is a backend URL shortener written in **Go (v1.24.5)** using the standard `net/http` package. The goal is to understand how backend systems are built from first principles rather than relying heavily on frameworks.
+This project is a backend service written in Go that provides file download via short codes. Files are stored as chunks in object storage (MinIO) and reconstructed on demand using metadata stored in PostgreSQL.
 
-The system follows a simple but practical pattern: fast in-memory storage for active data, and durable storage for long-term retention. It also includes authentication and request limiting to simulate real-world constraints.
+The system is designed with a clear separation of responsibilities:
 
----
-
-## How It Works
-
-A client sends a request to the API. Every request passes through middleware that validates a JWT and then enforces rate limits. If the request is allowed, the core handler processes it.
-
-For URL resolution, the server first checks **Redis**. Since Redis is in-memory, lookups are fast and suitable for high-frequency reads. If the key does not exist in Redis (for example, after expiration), the system can retrieve it from **Amazon DynamoDB**, which serves as durable storage.
-
-The response format returns shortened URLs under the `rilly/{uuid}` path.
+* HTTP layer handles requests and responses
+* Database layer manages metadata and structure
+* Object storage handles binary data
 
 ---
 
-## Rate Limiting and Tracking
+## Architecture
 
-Rate limiting is enforced server-side using Redis counters. Each validated JWT has an associated Redis key. On every request:
-
-* The counter is incremented atomically.
-* A 24-hour expiration is applied if the key is new.
-* If the counter exceeds 10 requests, the request is rejected.
-
-IP addresses are also tracked using a similar key structure. This prevents simple token farming and allows basic abuse monitoring.
-
-No in-memory Go maps are used for tracking. This ensures the system remains safe under concurrency and scalable across multiple instances.
-
----
-
-## Data Lifecycle
-
-Active URLs live in Redis with a 24-hour sliding expiration. Each access refreshes the TTL, keeping frequently used links in fast storage.
-
-When entries expire or become inactive, a background process batches relevant data to DynamoDB. DynamoDB holds durable records and supports indexing for longer-term storage and potential analytics.
-
-This hot-to-cold storage model keeps the request path fast while preserving important data.
+```
+Client
+  ↓
+HTTP Handler (/download/{shortcode})
+  ↓
+PostgreSQL (metadata, chunk ordering)
+  ↓
+MinIO (object storage)
+  ↓
+Streamed HTTP response
+```
 
 ---
 
-## Storage Design
+## Project Structure
 
-Redis is responsible for:
-
-* Fast URL resolution
-* Hit counting
-* Rate limiting
-* Short-lived active data
-
-DynamoDB is responsible for:
-
-* Durable URL records
-* Indexed lookups
-* Long-term storage
-
-Local development uses Docker for both services. Production would use managed DynamoDB on AWS.
+```
+/cmd/api/main.go           Entry point
+/internal/config           Configuration loading
+/internal/db               Database access layer
+/internal/minio            Object storage abstraction
+/internal/handler          HTTP handlers
+```
 
 ---
 
-## Design Principles
+## Configuration
 
-The system avoids heavy frameworks and keeps the request flow explicit and readable. Middleware handles authentication and rate limiting. Core handlers focus only on business logic. Storage responsibilities are clearly separated.
+The service is configured through environment variables:
 
-The emphasis is on understanding how caching, TTL policies, atomic counters, and batching strategies work in practice.
+```
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minio
+MINIO_SECRET_KEY=minio123
+MINIO_BUCKET=files
+MINIO_SSL=false
+
+DB_URL=postgres://user:password@localhost:5432/dbname?sslmode=disable
+```
+
+---
+
+## Database Schema
+
+### files
+
+Stores file-level metadata.
+
+```sql
+CREATE TABLE files (
+    short_code TEXT PRIMARY KEY,
+    file_type TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### file_chunks
+
+Stores chunk-level information for reconstruction.
+
+```sql
+CREATE TABLE file_chunks (
+    id SERIAL PRIMARY KEY,
+    short_code TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    object_key TEXT NOT NULL
+);
+```
+
+---
+
+## Running the Service
+
+Start the server:
+
+```
+go run cmd/api/main.go
+```
+
+The service listens on:
+
+```
+http://localhost:8080
+```
+
+---
+
+## API
+
+### Download File
+
+```
+GET /download/{shortcode}
+```
+
+#### Behavior
+
+1. Extract `short_code` from the request path
+2. Query file metadata from PostgreSQL
+3. Query chunk list ordered by `chunk_index`
+4. Stream each chunk sequentially from MinIO
+5. The client receives a continuous file stream
+
+---
+
+## Implementation Notes
+
+### Streaming
+
+The service streams data directly to the response using `io.Copy`. Files are not fully loaded into memory, which ensures consistent memory usage regardless of file size.
+
+### Ordering
+
+Chunk ordering is enforced at the database level using `ORDER BY chunk_index`. Object storage is not used to determine order.
+
+### Separation of Concerns
+
+* Handlers manage HTTP concerns only
+* Database layer is responsible for metadata
+* Object storage layer is responsible for retrieving binary data
+
+---
+
+## Limitations
+
+* No upload endpoint
+* No authentication or authorization
+* No support for partial content (range requests)
+* No data integrity verification (checksum)
+
+---
+
+## Future Work
+
+* Implement upload with chunking
+* Add support for HTTP range requests
+* Introduce checksum validation
+* Add background cleanup jobs
+* Improve observability (metrics, structured logging)
+
+---
+
+## License
+
+MIT

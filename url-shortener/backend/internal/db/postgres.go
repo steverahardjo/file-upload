@@ -14,22 +14,25 @@ type Database struct {
 }
 
 type File struct {
-	ID            int       `db:"id"`
-	URL           string    `db:"url"`
-	ShortCode     string    `db:"short_code"`
-	CreatedAt     time.Time `db:"created_at"`
-	Size          int       `db:"bytes"`
-	FileType      string    `db:"file_type"`
-	ChunksGroupID int       `db:"chunks_group_id"`
+	ShortCode string
+	FileType  string
+	Size      int
+	CreatedAt time.Time
+}
+
+type Chunk struct {
+	ObjectKey string
+	Index     int
 }
 
 func NewDatabase(cfg *config.DBConfig) (*Database, error) {
 	db, err := sql.Open("postgres", cfg.URL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("open db: %w", err)
 	}
+
 	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("ping db: %w", err)
 	}
 
 	db.SetMaxOpenConns(25)
@@ -41,25 +44,76 @@ func NewDatabase(cfg *config.DBConfig) (*Database, error) {
 
 func (d *Database) InitSchema() error {
 	query := `
-		CREATE TABLE IF NOT EXISTS files (
-			id SERIAL PRIMARY KEY,
-			url TEXT NOT NULL,
-			short_code TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			bytes INTEGER NOT NULL,
-			file_type TEXT NOT NULL,
-			chunks_group_id INTEGER NOT NULL
-		);
+	CREATE TABLE IF NOT EXISTS files (
+		short_code TEXT PRIMARY KEY,
+		file_type TEXT NOT NULL,
+		bytes INTEGER NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS file_chunks (
+		id SERIAL PRIMARY KEY,
+		short_code TEXT NOT NULL,
+		chunk_index INTEGER NOT NULL,
+		object_key TEXT NOT NULL
+	);
 	`
 	_, err := d.DB.Exec(query)
 	return err
 }
 
-func (d *Database) AddFileRecord(file *File) error {
-	query := `
-		INSERT INTO files (url, short_code, bytes, file_type, chunks_group_id)
-		VALUES ($1, $2, $3, $4, $5)
-	`
-	_, err := d.DB.Exec(query, file.URL, file.ShortCode, file.Size, file.FileType, file.ChunksGroupID)
+func (d *Database) CreateFile(file *File) error {
+	_, err := d.DB.Exec(`
+		INSERT INTO files (short_code, file_type, bytes)
+		VALUES ($1, $2, $3)
+	`, file.ShortCode, file.FileType, file.Size)
 	return err
+}
+
+func (d *Database) AddChunk(shortCode string, index int, objectKey string) error {
+	_, err := d.DB.Exec(`
+		INSERT INTO file_chunks (short_code, chunk_index, object_key)
+		VALUES ($1, $2, $3)
+	`, shortCode, index, objectKey)
+	return err
+}
+
+func (d *Database) GetFile(shortCode string) (*File, error) {
+	row := d.DB.QueryRow(`
+		SELECT short_code, file_type, bytes, created_at
+		FROM files
+		WHERE short_code = $1
+	`, shortCode)
+
+	var f File
+	err := row.Scan(&f.ShortCode, &f.FileType, &f.Size, &f.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &f, err
+}
+
+func (d *Database) GetChunks(shortCode string) ([]Chunk, error) {
+	rows, err := d.DB.Query(`
+		SELECT object_key, chunk_index
+		FROM file_chunks
+		WHERE short_code = $1
+		ORDER BY chunk_index ASC
+	`, shortCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chunks []Chunk
+
+	for rows.Next() {
+		var c Chunk
+		if err := rows.Scan(&c.ObjectKey, &c.Index); err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, c)
+	}
+
+	return chunks, rows.Err()
 }
