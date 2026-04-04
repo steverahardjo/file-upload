@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/lib/pq"
+	pq "github.com/lib/pq"
 	config "github.com/steverahardjo/url-shortener/internal/config"
 )
 
@@ -26,7 +26,18 @@ type Chunk struct {
 }
 
 func NewDatabase(cfg *config.DBConfig) (*Database, error) {
-	db, err := sql.Open("postgres", cfg.URL)
+	dsn := pq.Config{
+		Host:     cfg.Host,
+		Port:     5432,
+		User:     cfg.User,
+		Password: cfg.Password,
+		DBName:   cfg.DBName,
+	}
+	c, err := pq.NewConnectorConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("new connector config: %w", err)
+	}
+	db := sql.OpenDB(c)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}

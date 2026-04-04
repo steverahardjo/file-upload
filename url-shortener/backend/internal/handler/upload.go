@@ -13,3 +13,8 @@ func HandleUpload(logger *log.Logger, db *db.Database, store *minio.ObjectStore)
 
 	})
 }
+
+func UploadFile(logger *log.Logger, store *minio.ObjectStore, reader io.Reader, db *db.Database, file string, limit int) {
+	if
+
+}
