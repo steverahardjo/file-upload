@@ -6,7 +6,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	config "github.com/url-shortener/backend/internal/config"
+	config "github.com/steverahardjo/url-shortener/internal/config"
 )
 
 type Database struct {

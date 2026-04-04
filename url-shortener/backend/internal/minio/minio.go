@@ -7,18 +7,19 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	config "github.com/url-shortener/backend/internal/config"
+	config "github.com/steverahardjo/url-shortener/internal/config"
 )
 
 type ObjectStore struct {
 	client     *minio.Client
 	bucketName string
+	size_limit int
 }
 
-func NewFromConfig(cfg config.MinioConfig) (*ObjectStore, error) {
+func NewFromConfig(cfg config.ObjStoreConfig) (*ObjectStore, error) {
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
+		Secure: cfg.Secure,
 	})
 	if err != nil {
 		return nil, err
@@ -44,4 +45,12 @@ func (o *ObjectStore) GetObject(ctx context.Context, key string) (io.ReadCloser,
 	}
 
 	return obj, nil
+}
+
+func (o *ObjectStore) PutObject(ctx context.Context, key string, r io.Reader, size int64, opts minio.PutObjectOptions) error {
+	if size > int64(o.size_limit) {
+		return fmt.Errorf("file size exceeds limit: %d > %d", size, o.size_limit)
+	}
+	_, err := o.client.PutObject(ctx, o.bucketName, key, r, size, opts)
+	return err
 }

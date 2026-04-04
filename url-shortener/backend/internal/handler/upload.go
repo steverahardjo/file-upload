@@ -4,10 +4,11 @@ import (
 	"log"
 	"net/http"
 
-	storage "github.com/url-shortener/backend/internal/db"
+	db "github.com/steverahardjo/url-shortener/internal/db"
+	minio "github.com/steverahardjo/url-shortener/internal/minio"
 )
 
-func HandleUpload(logger *log.Logger, db *storage.Database, store *storage.ObjectStore) http.HandlerFunc {
+func HandleUpload(logger *log.Logger, db *db.Database, store *minio.ObjectStore) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 	})
