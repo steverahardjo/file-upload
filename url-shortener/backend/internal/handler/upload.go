@@ -1,71 +1,68 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"strings"
 
-	db "github.com/steverahardjo/url-shortener/internal/db"
-	minio "github.com/steverahardjo/url-shortener/internal/minio"
+	"github.com/google/uuid"
+	"github.com/steverahardjo/url-shortener/internal/db"
 )
 
-func HandleUpload(logger *log.Logger, db *db.Database, store *minio.ObjectStore) http.HandlerFunc {
+func (h *Handler) HandleUpload() http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 1. Limit the size of the request (e.g., 10MB)
-		r.ParseMultipartForm(10 << 20)
+		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			http.Error(w, "File too large or invalid form", http.StatusRequestEntityTooLarge)
+			return
+		}
 
-		// 2. Retrieve the file from form data
-		file, handler, err := r.FormFile("myFile") // "myFile" is the form field name
+		// 2. Retrieve the file
+		file, header, err := r.FormFile("userFile")
 		if err != nil {
-			logger.Printf("Error retrieving the file: %v", err)
+			h.logging.Printf("Error retrieving file: %v", err)
 			http.Error(w, "Invalid file", http.StatusBadRequest)
 			return
 		}
 		defer file.Close()
 
-		// 3. Prepare MinIO options (Metadata & Content-Type)
+		shortCode := strings.ReplaceAll(uuid.New().String()[:8], "-", "")
 
-		opts := minio.ObjectStore.PutObjectOptions{
-			ContentType: handler.Header.Get("Content-Type"),
-			UserMetadata: map[string]string{
-				"x-amz-meta-original-name": handler.Filename,
-			},
+		contentType := header.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/octet-stream"
 		}
 
-		// 4. Call the upload logic
-		// In a real app, you'd likely generate a unique filename for 'fileKey'
-		fileKey := handler.Filename
-		UploadFile(r.Context(), logger, store, file, db, fileKey, opts)
+		opts := h.obj_store.GetMetadata(contentType, header.Filename)
+
+		_, err = h.obj_store.PutChunks(r.Context(), shortCode, []io.Reader{file}, opts)
+		if err != nil {
+			h.logging.Printf("MinIO Upload Error: %v", err)
+			http.Error(w, "Failed to upload to storage", http.StatusInternalServerError)
+			return
+		}
+
+		fileRecord := &db.File{
+			ShortCode: shortCode,
+			FileType:  contentType,
+			Size:      int(header.Size),
+		}
+
+		if err := h.db.CreateFile(fileRecord); err != nil {
+			h.logging.Printf("DB CreateFile Error: %v", err)
+			http.Error(w, "Failed to save file record", http.StatusInternalServerError)
+			return
+		}
+
+		objectKey := fmt.Sprintf("%s.part0", shortCode)
+		if err := h.db.AddChunk(shortCode, 0, objectKey); err != nil {
+			h.logging.Printf("DB AddChunk Error: %v", err)
+			http.Error(w, "Failed to save chunk record", http.StatusInternalServerError)
+			return
+		}
 
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprintf(w, "Successfully Uploaded: %s", handler.Filename)
+		fmt.Fprintf(w, "Successfully Uploaded!\nShort Code: %s\nOriginal Name: %s", shortCode, header.Filename)
 	})
-}
-
-func UploadFile(
-	ctx context.Context,
-	logger *log.Logger,
-	store *minio.ObjectStore,
-	reader io.Reader,
-	db *db.Database,
-	file string,
-	opts minio.PutObjectOptions, // Added parameter
-) {
-	logger.Printf("Saving file into MinIO: %s", file)
-
-	// Pass the reader and the options into PutChunks
-	urls, err := store.PutChunks(ctx, file, []io.Reader{reader}, opts)
-	if err != nil {
-		logger.Printf("Failed to save file into MinIO: %s", err)
-		return
-	}
-
-	// 5. Database Logic
-	// Use the DB connection to save the record of the upload
-	if len(urls) > 0 {
-		logger.Printf("File stored at: %s", urls[0])
-		// Example: db.Exec("INSERT INTO uploads (name, url) VALUES (?, ?)", file, urls[0])
-	}
 }

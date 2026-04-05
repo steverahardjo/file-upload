@@ -77,3 +77,13 @@ func (o *ObjectStore) PutChunks(ctx context.Context, baseKey string, chunks []io
 
 	return urls, nil
 }
+
+func (o *ObjectStore) GetMetadata(data_type string, file_name string) minio.PutObjectOptions {
+	return minio.PutObjectOptions{
+		ContentType: data_type,
+		UserMetadata: map[string]string{
+			"x-amz-meta-original-filename":  file_name,
+			"x-amz-meta-upload-environment": "production",
+		},
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,19 +12,15 @@ import (
 	"github.com/steverahardjo/url-shortener/internal/minio"
 )
 
-func HandleDownload(
-	logger *log.Logger,
-	database *db.Database,
-	store *minio.ObjectStore,
-) http.Handler {
+func (h *Handler) HandleDownload() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 		shortCode := strings.TrimPrefix(r.URL.Path, "/download/")
 
-		logger.Printf("download request: %s", shortCode)
+		h.logging.Printf("download request: %s", shortCode)
 
-		err := DownloadHelper(r.Context(), database, store, shortCode, w)
+		err := DownloadHelper(r.Context(), h.db, h.obj_store, shortCode, w)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
